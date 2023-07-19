@@ -1,100 +1,133 @@
 package com.example.myapplication
 
 import android.accessibilityservice.AccessibilityService
-import android.app.ActivityManager
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.graphics.Color
-import android.os.Build
-import android.provider.Settings
+import android.content.IntentFilter
+import android.hardware.camera2.CameraManager
+import android.media.AudioManager
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
-import androidx.core.app.NotificationCompat
-import java.lang.Exception
-import java.lang.reflect.Method
+import android.widget.Toast
 
 
 class AppDetectionService : AccessibilityService() {
 
     companion object {
-        private const val NOTIFICATION_ID = 1
-        private const val CHANNEL_ID = "AppDetectionChannel"
         private const val TAG = "AppDetectionService"
+        const val REGISTER_LISTENERS = "com.example.myapplication.REGISTER_LISTENERS"
+        const val UNREGISTER_LISTENERS = "com.example.myapplication.UNREGISTER_LISTENERS"
+        const val KEY = "HARDWARE"
+        const val AUDIO = "audio"
     }
 
-    override fun onServiceConnected() {
-        super.onServiceConnected()
-        showNotification()
-    }
+    private lateinit var cameraAvailabilityCallback: CameraAvailabilityCallback
+    private lateinit var audioRecordingCallback: AudioRecordingCallback
+    private lateinit var cameraManager: CameraManager
+    private lateinit var audioManager: AudioManager
+    private var registeredCallbacks = false
 
-
-
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            val packageName = event.packageName?.toString()
-
-            Log.e(TAG, "onAccessibilityEvent: ${event.packageName}")
-
-            // Check if the camera application or camera-related activity is in the foreground
-            if (packageName?.lowercase()?.contains("camera")== true) {
-                // Camera is being used
-                // Replace the following line with your desired implementation
-                Log.e(TAG, "onAccessibilityEvent: Camera is being used")
-//                startActivity(Intent(this, MainActivity::class.java).apply {
-//                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-//                    addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
-//                })
-
-                try {
-                    val am = getSystemService(ACTIVITY_SERVICE) as ActivityManager
-                    val forceStopPackageMethod = am.javaClass.getMethod("forceStopPackage", String::class.java)
-                    forceStopPackageMethod.invoke(am,packageName)
-                } catch (e : Exception) {
-                    Log.e(TAG, "onAccessibilityEvent: ",e )
-                }
+    private val broadcastReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == REGISTER_LISTENERS && registeredCallbacks.not()) {
+                registerCameraCallback()
+                registerAudioRecordingCallback()
+                registeredCallbacks = true
+            } else if (intent?.action == UNREGISTER_LISTENERS && registeredCallbacks) {
+                unregisterCameraAvailabilityCallback()
+                unregisterAudioRecordingCallback()
+                registeredCallbacks = false
             }
         }
     }
 
+    private val intentFiler = IntentFilter().apply {
+        addAction(REGISTER_LISTENERS)
+        addAction(UNREGISTER_LISTENERS)
+    }
+
+
+    override fun onServiceConnected() {
+        super.onServiceConnected()
+        registerReceiver(broadcastReceiver, intentFiler)
+        initializeCameraManager()
+        initializeAudioManager()
+        registeredCallbacks = true
+        Log.d(TAG, "onServiceConnected: Service connected, callbacks registered")
+    }
+
+
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        //No Impl
+    }
 
     override fun onInterrupt() {
-        // Not used in this example
+        //No impl
     }
 
-    private fun showNotification() {
-        createNotificationChannel()
-
-        val notificationIntent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-        val pendingIntent = PendingIntent.getActivity(
-            this,
-            0,
-            notificationIntent,
-            PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("App Detection Service")
-            .setContentText("Running...")
-            .setContentIntent(pendingIntent)
-            .build()
-
-        startForeground(NOTIFICATION_ID, notification)
-    }
-
-    private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "App Detection Service Channel",
-                NotificationManager.IMPORTANCE_DEFAULT
-            )
-            channel.lightColor = Color.GREEN
-            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            manager.createNotificationChannel(channel)
+    private fun initializeAudioManager() {
+        if (this::audioManager.isInitialized.not()) {
+            audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            buildAudioCallback()
+            registerAudioRecordingCallback()
         }
     }
 
+    private fun registerAudioRecordingCallback() {
+        audioManager.registerAudioRecordingCallback(audioRecordingCallback, null)
+    }
+
+    private fun unregisterAudioRecordingCallback() {
+        audioManager.unregisterAudioRecordingCallback(audioRecordingCallback)
+    }
+
+    private fun initializeCameraManager() {
+        if (this::cameraManager.isInitialized.not()) {
+            cameraManager = getSystemService(CAMERA_SERVICE) as CameraManager
+            buildCameraCallback()
+        }
+    }
+
+    private fun buildCameraCallback() {
+        cameraAvailabilityCallback = CameraAvailabilityCallback { isCameraAvailable ->
+            if (isCameraAvailable.not()) {
+                showOverlay(false)
+            }
+        }
+        registerCameraCallback()
+    }
+
+    private fun buildAudioCallback() {
+        audioRecordingCallback = AudioRecordingCallback { isMicOn ->
+            if (isMicOn) {
+               showOverlay(true)
+                Toast.makeText(this, "Mic usage detected", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun unregisterCameraAvailabilityCallback() {
+        cameraManager.unregisterAvailabilityCallback(cameraAvailabilityCallback)
+    }
+
+    private fun registerCameraCallback() {
+        cameraManager.registerAvailabilityCallback(
+            cameraAvailabilityCallback,
+            Handler(Looper.myLooper() ?: Looper.getMainLooper())
+        )
+    }
+
+    private fun showOverlay(isRecordingAudio:Boolean) {
+        startActivity(Intent(
+            this@AppDetectionService, MainActivity::class.java
+        ).apply {
+            if (isRecordingAudio) {
+                putExtra(KEY, AUDIO)
+            }
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        })
+    }
 }
