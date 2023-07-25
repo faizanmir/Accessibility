@@ -13,7 +13,6 @@ import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.widget.Toast
 
-
 class AppDetectionService : AccessibilityService() {
 
     companion object {
@@ -103,7 +102,7 @@ class AppDetectionService : AccessibilityService() {
     private fun buildAudioCallback() {
         audioRecordingCallback = AudioRecordingCallback { isMicOn ->
             if (isMicOn) {
-               showOverlay(true)
+                showOverlay(true)
                 Toast.makeText(this, "Mic usage detected", Toast.LENGTH_SHORT).show()
             }
         }
@@ -120,7 +119,7 @@ class AppDetectionService : AccessibilityService() {
         )
     }
 
-    private fun showOverlay(isRecordingAudio:Boolean) {
+    private fun showOverlay(isRecordingAudio: Boolean) {
         startActivity(Intent(
             this@AppDetectionService, MainActivity::class.java
         ).apply {
